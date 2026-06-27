@@ -68,7 +68,11 @@ function isEmail(value) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value 
 
 async function findUserByEmail(email) {
   const { rows } = await query(
-    `SELECT id, email, name, picture_url FROM users WHERE LOWER(email) = $1 ORDER BY updated_at DESC LIMIT 1`,
+    `SELECT id, email, name, picture_url, email_verified, account_status
+     FROM users
+     WHERE LOWER(email) = $1 AND account_status = 'active'
+     ORDER BY updated_at DESC
+     LIMIT 1`,
     [String(email || '').trim().toLowerCase()],
   );
   return rows[0] || null;
@@ -494,10 +498,10 @@ async function checkInviteeHandler(req, reply) {
   if (!isEmail(email)) return reply.code(400).send(ERR('VALIDATION_ERROR', 'valid email required'));
   const user = await findUserByEmail(email);
   const { rows: existingMembers } = await query(
-    `SELECT 1 FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.organization_id = $1 AND LOWER(u.email) = $2 LIMIT 1`,
+    `SELECT 1 FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.organization_id = $1 AND LOWER(u.email) = $2 AND u.account_status = 'active' LIMIT 1`,
     [auth.organization.id, email],
   );
-  return { email, exists: Boolean(user), already_member: Boolean(existingMembers[0]), user: user ? { id: user.id, email: user.email, name: user.name, picture_url: user.picture_url } : null };
+  return { email, exists: Boolean(user), already_member: Boolean(existingMembers[0]), user: user ? { id: user.id, email: user.email, name: user.name, picture_url: user.picture_url, email_verified: user.email_verified, account_status: user.account_status } : null };
 }
 
 fastify.post('/api/invites/check', {
@@ -519,7 +523,7 @@ fastify.post('/api/invites', {
   if (role === 'owner') return reply.code(400).send(ERR('VALIDATION_ERROR', 'Invite admin, developer, or viewer roles.'));
   const invitedUser = await findUserByEmail(email);
   const { rows: existingMembers } = await query(
-    `SELECT 1 FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.organization_id = $1 AND LOWER(u.email) = $2 LIMIT 1`,
+    `SELECT 1 FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.organization_id = $1 AND LOWER(u.email) = $2 AND u.account_status = 'active' LIMIT 1`,
     [auth.organization.id, email],
   );
   if (existingMembers[0]) return reply.code(409).send(ERR('ALREADY_MEMBER', 'This user is already in this workspace.'));
@@ -536,7 +540,7 @@ fastify.post('/api/invites', {
     emailResult = await sendEmail({ to: email, ...emailContent });
     if (!emailResult.sent) req.log.error({ emailResult, invited_email: email }, 'invite email failed');
   }
-  return { success: true, id, invited_email: email, invited_user: invitedUser ? { id: invitedUser.id, email: invitedUser.email, name: invitedUser.name, picture_url: invitedUser.picture_url } : null, user_exists: Boolean(invitedUser), role, invite_url: inviteLink(token), email_delivery: emailResult };
+  return { success: true, id, invited_email: email, invited_user: invitedUser ? { id: invitedUser.id, email: invitedUser.email, name: invitedUser.name, picture_url: invitedUser.picture_url, email_verified: invitedUser.email_verified, account_status: invitedUser.account_status } : null, user_exists: Boolean(invitedUser), role, invite_url: inviteLink(token), email_delivery: emailResult };
 });
 
 fastify.delete('/api/invites/:id', async (req, reply) => {
@@ -976,11 +980,13 @@ async function start() {
       EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organizations' AND column_name='plan') AS org_plan_ok,
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='billing_events') AS billing_events_ok,
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='organization_invites') AS organization_invites_ok,
-      EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization_invites' AND column_name='invited_user_id') AS organization_invites_user_ok
+      EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization_invites' AND column_name='invited_user_id') AS organization_invites_user_ok,
+      EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='account_status') AS users_account_status_ok,
+      EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='last_seen_at') AS users_last_seen_ok
   `);
   const c = schemaChecks[0] || {};
-  if (!(c.projects_ok && c.subkeys_token_cipher_ok && c.subkeys_token_iv_ok && c.subkeys_token_tag_ok && c.health_ok && c.error_logs_ok && c.request_log_request_id_ok && c.request_log_provider_ok && c.request_log_error_reason_ok && c.request_log_cost_ok && c.users_ok && c.organizations_ok && c.organization_members_ok && c.project_org_ok && c.org_plan_ok && c.billing_events_ok && c.organization_invites_ok && c.organization_invites_user_ok)) {
-    throw new Error('Schema drift detected. Apply migrations in order: 001_initial_postgres.sql, 002_health_monitoring.sql, 003_request_error_logs.sql, 004_request_log_details.sql, 005_auth_organizations.sql, 006_billing_subscriptions.sql, 007_members_invites.sql, 008_invited_user_relation.sql');
+  if (!(c.projects_ok && c.subkeys_token_cipher_ok && c.subkeys_token_iv_ok && c.subkeys_token_tag_ok && c.health_ok && c.error_logs_ok && c.request_log_request_id_ok && c.request_log_provider_ok && c.request_log_error_reason_ok && c.request_log_cost_ok && c.users_ok && c.organizations_ok && c.organization_members_ok && c.project_org_ok && c.org_plan_ok && c.billing_events_ok && c.organization_invites_ok && c.organization_invites_user_ok && c.users_account_status_ok && c.users_last_seen_ok)) {
+    throw new Error('Schema drift detected. Apply migrations in order: 001_initial_postgres.sql, 002_health_monitoring.sql, 003_request_error_logs.sql, 004_request_log_details.sql, 005_auth_organizations.sql, 006_billing_subscriptions.sql, 007_members_invites.sql, 008_invited_user_relation.sql, 009_user_registry_status.sql');
   }
 
   const writeDailyHealth = async () => {

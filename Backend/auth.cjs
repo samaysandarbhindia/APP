@@ -92,17 +92,40 @@ function slugify(value) {
 
 async function syncAuthUser(claims) {
   const auth0Sub = String(claims.sub);
-  const email = claims.email || null;
+  const email = claims.email ? String(claims.email).trim().toLowerCase() : null;
   const name = claims.name || claims.nickname || email || 'Lethem User';
   const pictureUrl = claims.picture || null;
+  const emailVerified = Boolean(claims.email_verified);
   const { rows } = await query(
-    `INSERT INTO users (id, auth0_sub, email, name, picture_url, updated_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())
-     ON CONFLICT (auth0_sub) DO UPDATE SET email = EXCLUDED.email, name = COALESCE(NULLIF(users.name, ''), EXCLUDED.name), picture_url = EXCLUDED.picture_url, updated_at = NOW()
-     RETURNING id, auth0_sub, email, name, picture_url`,
-    [randomUUID(), auth0Sub, email, name, pictureUrl],
+    `INSERT INTO users (id, auth0_sub, email, name, picture_url, email_verified, account_status, last_seen_at, login_count, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW(), 1, NOW())
+     ON CONFLICT (auth0_sub) DO UPDATE SET
+       email = EXCLUDED.email,
+       name = COALESCE(NULLIF(users.name, ''), EXCLUDED.name),
+       picture_url = EXCLUDED.picture_url,
+       email_verified = EXCLUDED.email_verified,
+       account_status = 'active',
+       deleted_at = NULL,
+       last_seen_at = NOW(),
+       login_count = users.login_count + 1,
+       updated_at = NOW()
+     RETURNING id, auth0_sub, email, name, picture_url, email_verified, account_status`,
+    [randomUUID(), auth0Sub, email, name, pictureUrl, emailVerified],
   );
-  return rows[0];
+  const user = rows[0];
+  if (user?.email) {
+    await query(
+      `UPDATE organization_invites
+       SET invited_user_id = $1, updated_at = NOW()
+       WHERE invited_user_id IS NULL
+         AND accepted_at IS NULL
+         AND revoked_at IS NULL
+         AND expires_at > NOW()
+         AND LOWER(email) = LOWER($2)`,
+      [user.id, user.email],
+    );
+  }
+  return user;
 }
 
 async function acceptPendingInvites(user) {
