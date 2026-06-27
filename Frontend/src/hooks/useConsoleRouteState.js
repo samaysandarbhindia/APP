@@ -17,6 +17,13 @@ export default function useConsoleRouteState() {
     const params = new URLSearchParams(window.location.search);
     if (params.has('code') && params.has('state')) return;
 
+    const inviteToken = params.get('invite');
+    if (inviteToken) {
+      try { sessionStorage.setItem('lethem_pending_invite_token', inviteToken); } catch (_) {}
+      window.history.replaceState({}, '', '/console');
+      return parsePath();
+    }
+
     const publicRoutes = {
       '/': 'landing',
       '/terms-and-conditions': 'terms',

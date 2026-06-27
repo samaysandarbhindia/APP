@@ -157,6 +157,8 @@ async function ensureAuthSchema() {
       UNIQUE (organization_id, email, token_hash)
     );
 
+    ALTER TABLE organization_invites ADD COLUMN IF NOT EXISTS invited_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
     CREATE INDEX IF NOT EXISTS idx_organization_invites_org ON organization_invites(organization_id);
     CREATE INDEX IF NOT EXISTS idx_organization_invites_email ON organization_invites(LOWER(email));
     CREATE INDEX IF NOT EXISTS idx_organization_invites_token_hash ON organization_invites(token_hash);

@@ -50,7 +50,7 @@ function publicAppUrl() {
 }
 
 function inviteLink(token) {
-  return `${publicAppUrl()}/invite/${encodeURIComponent(token)}`;
+  return `${publicAppUrl()}/console?invite=${encodeURIComponent(token)}`;
 }
 
 function inviteEmailContent({ role, organizationName, inviterName, token }) {
