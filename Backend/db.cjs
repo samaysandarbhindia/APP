@@ -87,6 +87,11 @@ async function ensureAuthSchema() {
       email TEXT,
       name TEXT,
       picture_url TEXT,
+      email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      account_status TEXT NOT NULL DEFAULT 'active' CHECK (account_status IN ('active','deleted')),
+      last_seen_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ,
+      login_count INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -111,7 +116,16 @@ async function ensureAuthSchema() {
 
     ALTER TABLE projects ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
 
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status TEXT NOT NULL DEFAULT 'active';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users DROP CONSTRAINT IF EXISTS users_account_status_check;
+    ALTER TABLE users ADD CONSTRAINT users_account_status_check CHECK (account_status IN ('active','deleted'));
+
     CREATE INDEX IF NOT EXISTS idx_users_auth0_sub ON users(auth0_sub);
+    CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(LOWER(email));
     CREATE INDEX IF NOT EXISTS idx_organizations_owner_user_id ON organizations(owner_user_id);
     CREATE INDEX IF NOT EXISTS idx_organization_members_user_id ON organization_members(user_id);
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
@@ -156,6 +170,8 @@ async function ensureAuthSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (organization_id, email, token_hash)
     );
+
+    ALTER TABLE organization_invites ADD COLUMN IF NOT EXISTS invited_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
 
     CREATE INDEX IF NOT EXISTS idx_organization_invites_org ON organization_invites(organization_id);
     CREATE INDEX IF NOT EXISTS idx_organization_invites_email ON organization_invites(LOWER(email));

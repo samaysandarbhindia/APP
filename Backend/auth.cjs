@@ -17,6 +17,10 @@ function getAudience() {
   return process.env.AUTH0_AUDIENCE || '';
 }
 
+function getClientId() {
+  return process.env.AUTH0_CLIENT_ID || process.env.AUTH0_CLIENTID || process.env.CLIENT_ID || '';
+}
+
 function isAuthConfigured() {
   return Boolean(getIssuerBaseUrl() && getAudience());
 }
@@ -48,19 +52,19 @@ async function fetchJwks() {
   return jwksCache.keys;
 }
 
-function assertClaims(payload) {
+function assertClaims(payload, expectedAudience = getAudience()) {
   const issuer = `${getIssuerBaseUrl()}/`;
-  const audience = getAudience();
+  const audience = expectedAudience;
   const nowSec = Math.floor(Date.now() / 1000);
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (payload.iss !== issuer) throw new Error('invalid token issuer');
-  if (!audiences.includes(audience)) throw new Error('invalid token audience');
+  if (audience && !audiences.includes(audience)) throw new Error('invalid token audience');
   if (!payload.sub) throw new Error('missing token subject');
   if (payload.exp && Number(payload.exp) + CLOCK_TOLERANCE_SEC < nowSec) throw new Error('token expired');
   if (payload.nbf && Number(payload.nbf) - CLOCK_TOLERANCE_SEC > nowSec) throw new Error('token not active');
 }
 
-async function verifyAuth0Token(token) {
+async function verifySignedAuth0Token(token, expectedAudience) {
   const jwt = parseJwt(token);
   if (jwt.header.alg !== 'RS256') throw new Error('unsupported token algorithm');
   const keys = await fetchJwks();
@@ -69,8 +73,18 @@ async function verifyAuth0Token(token) {
   const publicKey = createPublicKey({ key: jwk, format: 'jwk' });
   const ok = verifySignature('RSA-SHA256', Buffer.from(jwt.signingInput), publicKey, jwt.signature);
   if (!ok) throw new Error('invalid token signature');
-  assertClaims(jwt.payload);
+  assertClaims(jwt.payload, expectedAudience);
   return jwt.payload;
+}
+
+async function verifyAuth0Token(token) {
+  return verifySignedAuth0Token(token, getAudience());
+}
+
+async function verifyAuth0IdToken(token, expectedSub) {
+  const payload = await verifySignedAuth0Token(token, getClientId() || null);
+  if (expectedSub && payload.sub !== expectedSub) throw new Error('id token subject mismatch');
+  return payload;
 }
 
 function configuredLegacyOwnerEmails() {
@@ -92,17 +106,40 @@ function slugify(value) {
 
 async function syncAuthUser(claims) {
   const auth0Sub = String(claims.sub);
-  const email = claims.email || null;
+  const email = claims.email ? String(claims.email).trim().toLowerCase() : null;
   const name = claims.name || claims.nickname || email || 'Lethem User';
   const pictureUrl = claims.picture || null;
+  const emailVerified = Boolean(claims.email_verified);
   const { rows } = await query(
-    `INSERT INTO users (id, auth0_sub, email, name, picture_url, updated_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())
-     ON CONFLICT (auth0_sub) DO UPDATE SET email = EXCLUDED.email, name = COALESCE(NULLIF(users.name, ''), EXCLUDED.name), picture_url = EXCLUDED.picture_url, updated_at = NOW()
-     RETURNING id, auth0_sub, email, name, picture_url`,
-    [randomUUID(), auth0Sub, email, name, pictureUrl],
+    `INSERT INTO users (id, auth0_sub, email, name, picture_url, email_verified, account_status, last_seen_at, login_count, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW(), 1, NOW())
+     ON CONFLICT (auth0_sub) DO UPDATE SET
+       email = EXCLUDED.email,
+       name = COALESCE(NULLIF(users.name, ''), EXCLUDED.name),
+       picture_url = EXCLUDED.picture_url,
+       email_verified = EXCLUDED.email_verified,
+       account_status = 'active',
+       deleted_at = NULL,
+       last_seen_at = NOW(),
+       login_count = users.login_count + 1,
+       updated_at = NOW()
+     RETURNING id, auth0_sub, email, name, picture_url, email_verified, account_status`,
+    [randomUUID(), auth0Sub, email, name, pictureUrl, emailVerified],
   );
-  return rows[0];
+  const user = rows[0];
+  if (user?.email) {
+    await query(
+      `UPDATE organization_invites
+       SET invited_user_id = $1, updated_at = NOW()
+       WHERE invited_user_id IS NULL
+         AND accepted_at IS NULL
+         AND revoked_at IS NULL
+         AND expires_at > NOW()
+         AND LOWER(email) = LOWER($2)`,
+      [user.id, user.email],
+    );
+  }
+  return user;
 }
 
 async function acceptPendingInvites(user) {
@@ -206,7 +243,17 @@ async function authenticateRequest(req, reply) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (!bearer) return reply.code(401).send(ERR('MISSING_AUTHORIZATION', 'Missing Auth0 Authorization header.'));
   try {
-    const claims = await verifyAuth0Token(bearer);
+    const accessClaims = await verifyAuth0Token(bearer);
+    let claims = accessClaims;
+    const idToken = String(req.headers['x-lethem-id-token'] || '').trim();
+    if (idToken) {
+      try {
+        const idClaims = await verifyAuth0IdToken(idToken, accessClaims.sub);
+        claims = { ...accessClaims, ...idClaims, aud: accessClaims.aud };
+      } catch (idErr) {
+        req.log.warn({ err: idErr.message }, 'Auth0 ID token ignored');
+      }
+    }
     const user = await syncAuthUser(claims);
     const organization = await ensureDefaultOrganization(user);
     req.auth = { claims, user, organization };

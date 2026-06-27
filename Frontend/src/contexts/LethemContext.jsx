@@ -15,7 +15,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const VALID_PAGES = ['overview', 'masterkeys', 'subkeys', 'logs', 'demo', 'health', 'notifications', 'billing', 'analytics', 'members', 'roles', 'invites', 'usage', 'subscription', 'invoices', 'general', 'endpoint', 'security', 'audit', 'danger', 'profile', 'workspace', 'docs'];
 
 export default function LethemProvider({ children, projectSlug, page }) {
-  const { getAccessToken, isAuthenticated, user } = useAuth();
+  const { getAccessToken, getIdToken, isAuthenticated, user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [projectName, setProjectName] = useState('');
   const [projectSearch, setProjectSearch] = useState('');
@@ -67,6 +67,8 @@ export default function LethemProvider({ children, projectSlug, page }) {
     const cacheScope = skipAuth ? 'public' : (user?.sub || 'anonymous');
     if (!skipAuth && isAuthenticated) {
       headers.Authorization = `Bearer ${await getAccessToken()}`;
+      const idToken = await getIdToken();
+      if (idToken) headers['x-lethem-id-token'] = idToken;
     }
     delete opts.skipAuth;
     delete opts.noCache;
