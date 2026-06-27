@@ -17,6 +17,10 @@ function getAudience() {
   return process.env.AUTH0_AUDIENCE || '';
 }
 
+function getClientId() {
+  return process.env.AUTH0_CLIENT_ID || process.env.AUTH0_CLIENTID || process.env.CLIENT_ID || '';
+}
+
 function isAuthConfigured() {
   return Boolean(getIssuerBaseUrl() && getAudience());
 }
@@ -48,19 +52,19 @@ async function fetchJwks() {
   return jwksCache.keys;
 }
 
-function assertClaims(payload) {
+function assertClaims(payload, expectedAudience = getAudience()) {
   const issuer = `${getIssuerBaseUrl()}/`;
-  const audience = getAudience();
+  const audience = expectedAudience;
   const nowSec = Math.floor(Date.now() / 1000);
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (payload.iss !== issuer) throw new Error('invalid token issuer');
-  if (!audiences.includes(audience)) throw new Error('invalid token audience');
+  if (audience && !audiences.includes(audience)) throw new Error('invalid token audience');
   if (!payload.sub) throw new Error('missing token subject');
   if (payload.exp && Number(payload.exp) + CLOCK_TOLERANCE_SEC < nowSec) throw new Error('token expired');
   if (payload.nbf && Number(payload.nbf) - CLOCK_TOLERANCE_SEC > nowSec) throw new Error('token not active');
 }
 
-async function verifyAuth0Token(token) {
+async function verifySignedAuth0Token(token, expectedAudience) {
   const jwt = parseJwt(token);
   if (jwt.header.alg !== 'RS256') throw new Error('unsupported token algorithm');
   const keys = await fetchJwks();
@@ -69,8 +73,18 @@ async function verifyAuth0Token(token) {
   const publicKey = createPublicKey({ key: jwk, format: 'jwk' });
   const ok = verifySignature('RSA-SHA256', Buffer.from(jwt.signingInput), publicKey, jwt.signature);
   if (!ok) throw new Error('invalid token signature');
-  assertClaims(jwt.payload);
+  assertClaims(jwt.payload, expectedAudience);
   return jwt.payload;
+}
+
+async function verifyAuth0Token(token) {
+  return verifySignedAuth0Token(token, getAudience());
+}
+
+async function verifyAuth0IdToken(token, expectedSub) {
+  const payload = await verifySignedAuth0Token(token, getClientId() || null);
+  if (expectedSub && payload.sub !== expectedSub) throw new Error('id token subject mismatch');
+  return payload;
 }
 
 function configuredLegacyOwnerEmails() {
@@ -229,7 +243,17 @@ async function authenticateRequest(req, reply) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (!bearer) return reply.code(401).send(ERR('MISSING_AUTHORIZATION', 'Missing Auth0 Authorization header.'));
   try {
-    const claims = await verifyAuth0Token(bearer);
+    const accessClaims = await verifyAuth0Token(bearer);
+    let claims = accessClaims;
+    const idToken = String(req.headers['x-lethem-id-token'] || '').trim();
+    if (idToken) {
+      try {
+        const idClaims = await verifyAuth0IdToken(idToken, accessClaims.sub);
+        claims = { ...accessClaims, ...idClaims, aud: accessClaims.aud };
+      } catch (idErr) {
+        req.log.warn({ err: idErr.message }, 'Auth0 ID token ignored');
+      }
+    }
     const user = await syncAuthUser(claims);
     const organization = await ensureDefaultOrganization(user);
     req.auth = { claims, user, organization };

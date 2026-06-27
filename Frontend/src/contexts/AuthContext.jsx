@@ -190,6 +190,13 @@ export function AuthProvider({ children }) {
     return fresh.access_token;
   };
 
+  const getIdToken = async () => {
+    const fresh = readSession();
+    if (!fresh) throw new Error('Your session expired. Please sign in again.');
+    if (fresh.access_token !== session?.access_token) setSession(fresh);
+    return fresh.id_token || '';
+  };
+
   const value = useMemo(() => ({
     user: session?.user || null,
     isAuthenticated: Boolean(session?.access_token),
@@ -199,6 +206,7 @@ export function AuthProvider({ children }) {
     login,
     logout,
     getAccessToken,
+    getIdToken,
     updateLocalUser,
   }), [session, isLoading, authError, isConfigured]);
 

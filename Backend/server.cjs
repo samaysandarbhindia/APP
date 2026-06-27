@@ -32,7 +32,7 @@ const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
 fastify.register(require('@fastify/cors'), {
   origin: true,
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-lethem-client', 'x-keygate-client', 'x-project-id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-lethem-id-token', 'x-lethem-client', 'x-keygate-client', 'x-project-id'],
 });
 fastify.register(require('@fastify/helmet'), { contentSecurityPolicy: false });
 
@@ -92,8 +92,8 @@ async function acceptInviteForUser({ inviteId = null, token = null, user }) {
   );
   const invite = rows[0];
   if (!invite) return { error: 'INVITE_NOT_FOUND' };
-  const userEmail = String(user?.email || '').toLowerCase();
-  const invitedEmail = String(invite.email || '').toLowerCase();
+  const userEmail = String(user?.email || '').trim().toLowerCase();
+  const invitedEmail = String(invite.email || '').trim().toLowerCase();
   const invitedUserMatches = invite.invited_user_id && String(invite.invited_user_id) === String(user.id);
   if (!invitedUserMatches && invitedEmail !== userEmail) return { error: 'INVITE_EMAIL_MISMATCH' };
   await query('BEGIN');
