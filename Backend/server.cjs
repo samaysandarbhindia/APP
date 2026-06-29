@@ -425,19 +425,22 @@ fastify.get('/api/members', async (req, reply) => {
   const project = await getProject(req, reply); if (!project) return;
   const auth = req.auth;
   const { rows } = await query(
-    `(SELECT om.user_id AS id, om.role, EXTRACT(EPOCH FROM om.created_at)::bigint AS joined_at,
-            u.email, u.name, u.picture_url, true AS workspace_member
-       FROM organization_members om
-       JOIN users u ON u.id = om.user_id
-       WHERE om.organization_id = $1 AND om.role IN ('owner','admin'))
-     UNION ALL
-     (SELECT pm.user_id AS id, pm.role, EXTRACT(EPOCH FROM pm.created_at)::bigint AS joined_at,
-            u.email, u.name, u.picture_url, false AS workspace_member
-       FROM project_members pm
-       JOIN users u ON u.id = pm.user_id
-       WHERE pm.project_id = $2
-         AND NOT EXISTS (SELECT 1 FROM organization_members om WHERE om.organization_id = $1 AND om.user_id = pm.user_id AND om.role IN ('owner','admin')))
-     ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'developer' THEN 3 ELSE 4 END, joined_at ASC`,
+    `SELECT *
+       FROM (
+         SELECT om.user_id AS id, om.role, EXTRACT(EPOCH FROM om.created_at)::bigint AS joined_at,
+                u.email, u.name, u.picture_url, true AS workspace_member
+           FROM organization_members om
+           JOIN users u ON u.id = om.user_id
+           WHERE om.organization_id = $1 AND om.role IN ('owner','admin')
+         UNION ALL
+         SELECT pm.user_id AS id, pm.role, EXTRACT(EPOCH FROM pm.created_at)::bigint AS joined_at,
+                u.email, u.name, u.picture_url, false AS workspace_member
+           FROM project_members pm
+           JOIN users u ON u.id = pm.user_id
+           WHERE pm.project_id = $2
+             AND NOT EXISTS (SELECT 1 FROM organization_members om WHERE om.organization_id = $1 AND om.user_id = pm.user_id AND om.role IN ('owner','admin'))
+       ) members
+      ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'developer' THEN 3 ELSE 4 END, joined_at ASC`,
     [project.organization_id, project.id],
   );
   return rows.map((row) => ({ ...row, role: normalizeOrgRole(row.role), is_current_user: row.id === auth.user.id }));
