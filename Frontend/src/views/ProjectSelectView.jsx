@@ -16,7 +16,7 @@ export default function ProjectSelectView({ go }) {
   } = useLethem();
   const { user, logout, getAccessToken, isAuthenticated } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [accountUsage, setAccountUsage] = useState({ subkeys: 0, masterKeys: 0, tokens: 0, requests: 0, loading: false });
+  const [accountUsage, setAccountUsage] = useState({ subkeys: 0, invitedSubkeys: 0, masterKeys: 0, invitedMasterKeys: 0, tokens: 0, invitedTokens: 0, requests: 0, invitedRequests: 0, loading: false });
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [quotaRequests, setQuotaRequests] = useState([]);
   const [selectedInvite, setSelectedInvite] = useState(null);
@@ -40,13 +40,17 @@ export default function ProjectSelectView({ go }) {
   const projectLimitLabel = projectLimit == null ? 'Unlimited' : projectLimit;
   const subkeyLimitLabel = subkeyLimit == null ? 'Unlimited' : subkeyLimit;
   const tokenLimitLabel = tokenLimit == null ? 'Unlimited' : fmtNum(tokenLimit);
+  const ownProjects = projects.filter((project) => project.own_project !== false && !project.invited_project);
+  const invitedProjects = projects.filter((project) => project.invited_project || project.own_project === false);
   const activeProjectSlug = projects[0]?.slug || projects[0]?.id || '';
   const goProjectPage = (page) => activeProjectSlug ? go(`/console/${activeProjectSlug}/${page}`) : go('/console/new');
-  const displayedSubkeys = Math.max(accountUsage.subkeys, subkeys.length);
-  const displayedMasterKeys = Math.max(accountUsage.masterKeys, masterKeys.length);
-  const tokenUsage = Math.max(accountUsage.tokens, analytics?.totalTokens || 0);
-  const requestCount = Math.max(accountUsage.requests, analytics?.totalRequests || 0, analytics?.logs?.length || 0);
-  const isAtProjectLimit = projectLimit != null && projects.length >= projectLimit;
+  const displayedSubkeys = accountUsage.subkeys;
+  const displayedMasterKeys = accountUsage.masterKeys;
+  const tokenUsage = accountUsage.tokens;
+  const requestCount = accountUsage.requests;
+  const invitedUsage = { projects: invitedProjects.length, subkeys: accountUsage.invitedSubkeys, tokens: accountUsage.invitedTokens };
+  const formatUsageValue = (used, invited = 0, formatter = (value) => value) => `${formatter(used)}${invited ? ` (+${formatter(invited)})` : ''}`;
+  const isAtProjectLimit = projectLimit != null && ownProjects.length >= projectLimit;
   const userLabel = user?.name || user?.email || 'Signed in';
   const avatar = userLabel.charAt(0).toUpperCase();
   const avatarImage = user?.picture || '';
@@ -156,10 +160,14 @@ export default function ProjectSelectView({ go }) {
 
   useEffect(() => {
     const fallbackUsage = {
-      subkeys: subkeys.length,
-      masterKeys: masterKeys.length,
-      tokens: analytics?.totalTokens || 0,
-      requests: analytics?.totalRequests || analytics?.logs?.length || 0,
+      subkeys: 0,
+      invitedSubkeys: subkeys.length,
+      masterKeys: 0,
+      invitedMasterKeys: masterKeys.length,
+      tokens: 0,
+      invitedTokens: analytics?.totalTokens || 0,
+      requests: 0,
+      invitedRequests: analytics?.totalRequests || analytics?.logs?.length || 0,
     };
 
     if (!projects.length || !isAuthenticated) {
@@ -170,14 +178,16 @@ export default function ProjectSelectView({ go }) {
     const cacheScope = user?.sub || 'anonymous';
     const summaryKey = (project) => `/console-page/project/${project.slug || project.id}/summary`;
     const cachedSummaries = projects.map((project) => cacheGet(summaryKey(project), cacheScope));
-    const cachedTotal = cachedSummaries.reduce((totals, summary) => {
+    const cachedTotal = cachedSummaries.reduce((totals, summary, index) => {
       if (!summary) return totals;
-      totals.subkeys += Number(summary.subkeys || 0);
-      totals.masterKeys += Number(summary.masterKeys || 0);
-      totals.tokens += Number(summary.tokens || 0);
-      totals.requests += Number(summary.requests || 0);
+      const invited = projects[index]?.invited_project || projects[index]?.own_project === false;
+      const prefix = invited ? 'invited' : '';
+      totals[`${prefix}Subkeys`] += Number(summary.subkeys || 0);
+      totals[`${prefix}MasterKeys`] += Number(summary.masterKeys || 0);
+      totals[`${prefix}Tokens`] += Number(summary.tokens || 0);
+      totals[`${prefix}Requests`] += Number(summary.requests || 0);
       return totals;
-    }, { subkeys: 0, masterKeys: 0, tokens: 0, requests: 0 });
+    }, { subkeys: 0, invitedSubkeys: 0, masterKeys: 0, invitedMasterKeys: 0, tokens: 0, invitedTokens: 0, requests: 0, invitedRequests: 0 });
 
     if (cachedSummaries.every(Boolean)) {
       setAccountUsage({ ...cachedTotal, loading: false });
@@ -218,14 +228,16 @@ export default function ProjectSelectView({ go }) {
     }))
       .then((results) => {
         if (cancelled) return;
-        const next = results.reduce((totals, result) => {
+        const next = results.reduce((totals, result, index) => {
           if (result.status !== 'fulfilled') return totals;
-          totals.subkeys += Number(result.value.subkeys || 0);
-          totals.masterKeys += Number(result.value.masterKeys || 0);
-          totals.tokens += Number(result.value.tokens || 0);
-          totals.requests += Number(result.value.requests || 0);
+          const invited = projects[index]?.invited_project || projects[index]?.own_project === false;
+          const prefix = invited ? 'invited' : '';
+          totals[`${prefix}Subkeys`] += Number(result.value.subkeys || 0);
+          totals[`${prefix}MasterKeys`] += Number(result.value.masterKeys || 0);
+          totals[`${prefix}Tokens`] += Number(result.value.tokens || 0);
+          totals[`${prefix}Requests`] += Number(result.value.requests || 0);
           return totals;
-        }, { subkeys: 0, masterKeys: 0, tokens: 0, requests: 0 });
+        }, { subkeys: 0, invitedSubkeys: 0, masterKeys: 0, invitedMasterKeys: 0, tokens: 0, invitedTokens: 0, requests: 0, invitedRequests: 0 });
         setAccountUsage({ ...next, loading: false });
       })
       .catch(() => {
@@ -240,18 +252,18 @@ export default function ProjectSelectView({ go }) {
 
   const onboardingSteps = useMemo(() => [
     { label: 'Create account', done: true },
-    { label: 'Create first project', done: projects.length > 0 },
+    { label: 'Create first project', done: ownProjects.length > 0 },
     { label: 'Add provider API key', done: displayedMasterKeys > 0, onClick: () => goProjectPage('masterkeys') },
     { label: 'Create first subkey', done: displayedSubkeys > 0, onClick: () => goProjectPage('subkeys') },
     { label: 'Make first API request', done: requestCount > 0, onClick: () => goProjectPage('demo') },
-  ], [displayedMasterKeys, displayedSubkeys, projects.length, requestCount, activeProjectSlug]);
+  ], [displayedMasterKeys, displayedSubkeys, ownProjects.length, requestCount, activeProjectSlug]);
   const completedSteps = onboardingSteps.filter((step) => step.done).length;
   const onboardingPercent = (completedSteps / onboardingSteps.length) * 100;
 
   const planMeters = [
-    { label: 'Projects', used: projects.length, limit: projectLimit },
-    { label: 'Subkeys', used: displayedSubkeys, limit: subkeyLimit },
-    { label: 'Tokens', used: tokenUsage, limit: tokenLimit },
+    { label: 'Projects', used: ownProjects.length, invited: invitedUsage.projects, limit: projectLimit },
+    { label: 'Subkeys', used: displayedSubkeys, invited: invitedUsage.subkeys, limit: subkeyLimit },
+    { label: 'Tokens', used: tokenUsage, invited: invitedUsage.tokens, limit: tokenLimit, format: fmtNum },
   ];
 
   useEffect(() => {
@@ -356,10 +368,10 @@ export default function ProjectSelectView({ go }) {
           </div>
           <div className='console-top-bar'>
             <button type='button' className='console-plan-badge project-console-plan-link' onClick={() => go('/console/subscription')} aria-label='Open subscription page'>
-              <span className='console-plan-dot' /> {currentPlan?.name || 'Free'} plan <span>{projects.length} / {projectLimitLabel} projects</span>
+              <span className='console-plan-dot' /> {currentPlan?.name || 'Free'} plan <span>{formatUsageValue(ownProjects.length, invitedUsage.projects)} / {projectLimitLabel} projects</span>
             </button>
             <button className='btn btn-ghost console-create-btn project-console-manage-btn' onClick={() => go('/console/subscription')}>Manage subscription</button>
-            <button className='btn btn-primary console-create-btn' disabled={isAtProjectLimit} onClick={() => go('/console/new')}>+ New project</button>
+            <button className='btn btn-primary console-create-btn' aria-disabled={isAtProjectLimit} onClick={() => isAtProjectLimit ? notify(`Maximum ${projectLimitLabel} own projects allowed on your current plan`, 'error') : go('/console/new')}>+ New project</button>
           </div>
         </header>
 
@@ -374,7 +386,7 @@ export default function ProjectSelectView({ go }) {
         <section className='project-console-actions-wrap'>
           <h2>Quick Actions</h2>
           <div className='project-console-actions'>
-            <button onClick={() => go('/console/new')}><IconPlus /><span><strong>Create Project</strong><small>Get started</small></span><IconExternal /></button>
+            <button aria-disabled={isAtProjectLimit} onClick={() => isAtProjectLimit ? notify(`Maximum ${projectLimitLabel} own projects allowed on your current plan`, 'error') : go('/console/new')}><IconPlus /><span><strong>Create Project</strong><small>Get started</small></span><IconExternal /></button>
             <button onClick={() => goProjectPage('masterkeys')}><IconCheck /><span><strong>Add Provider</strong><small>{displayedMasterKeys > 0 ? 'Completed' : 'Get started'}</small></span><IconExternal /></button>
             <button onClick={() => goProjectPage('subkeys')}><IconSubkey /><span><strong>Create Subkey</strong><small>{displayedSubkeys > 0 ? 'Completed' : 'Get started'}</small></span><IconExternal /></button>
             <button onClick={() => goProjectPage('demo')}><IconDemo /><span><strong>Open Live Demo</strong><small>{requestCount > 0 ? 'Completed' : 'Get started'}</small></span><IconExternal /></button>
@@ -384,7 +396,7 @@ export default function ProjectSelectView({ go }) {
         <section className='project-console-plan card'>
           <button className='btn btn-ghost btn-sm' onClick={() => go('/console/subscription')}>Upgrade →</button>
           <div className='card-title'>Plan Usage</div><div className='card-sub'>Resource consumption across your {currentPlan?.name || 'Free'} plan</div>
-          <div className='project-console-meters'>{planMeters.map((meter) => { const pct = meter.limit ? Math.min(100, (meter.used / meter.limit) * 100) : 0; return <div key={meter.label}><p><strong>{meter.label}</strong><span>{fmtNum(meter.used)} / {meter.limit == null ? 'Unlimited' : fmtNum(meter.limit)}</span></p><div><span style={{ width: `${pct}%` }} /></div><small>{meter.limit ? `${Math.round(pct)}% used` : 'No fixed limit'}</small></div>; })}</div>
+          <div className='project-console-meters'>{planMeters.map((meter) => { const pct = meter.limit ? Math.min(100, (meter.used / meter.limit) * 100) : 0; const formatter = meter.format || fmtNum; return <div key={meter.label}><p><strong>{meter.label}</strong><span>{formatUsageValue(meter.used, meter.invited, formatter)} / {meter.limit == null ? 'Unlimited' : fmtNum(meter.limit)}</span></p><div><span style={{ width: `${pct}%` }} /></div><small>{meter.limit ? `${Math.round(pct)}% own usage` : 'No fixed limit'}{meter.invited ? ` · +${formatter(meter.invited)} invited not counted` : ''}</small></div>; })}</div>
         </section>
 
         <div className={`card projects-banner console-info-banner ${showPlanBanner ? '' : 'hidden'}`}>
@@ -393,7 +405,7 @@ export default function ProjectSelectView({ go }) {
           <button className='banner-close' onClick={() => setShowPlanBanner(false)} aria-label='Close banner'>✕</button>
         </div>
 
-        <div className='project-console-projects-head'><h2>Your Projects <span>{projects.length} / {projectLimitLabel}</span></h2><div className='project-console-search'><IconSearch /><input className='projects-search console-search-input' value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder='Search by name, label, or ID' /></div></div>
+        <div className='project-console-projects-head'><h2>Your Projects <span>{formatUsageValue(ownProjects.length, invitedUsage.projects)} / {projectLimitLabel}</span></h2><div className='project-console-search'><IconSearch /><input className='projects-search console-search-input' value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder='Search by name, label, or ID' /></div></div>
 
         <div className='projects-grid console-projects-grid'>
           {filteredProjects.map((p) => {
@@ -401,7 +413,7 @@ export default function ProjectSelectView({ go }) {
             const copyId = `project-${p.id}`;
             return (
               <article key={p.id} className='card project-card console-project-card' role='button' tabIndex={0} onClick={() => go(`/console/${projectRef}/overview`)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') go(`/console/${projectRef}/overview`); }}>
-                <div className='console-project-card-header'><h3>{p.name}</h3><span className={`badge ${p.status === 'active' ? 'active' : 'paused'}`}>• {p.status}</span></div>
+                <div className='console-project-card-header'><h3>{p.name}</h3><span className={`badge ${p.status === 'active' ? 'active' : 'paused'}`}>• {p.status}</span>{(p.invited_project || p.own_project === false) && <span className='badge paused'>Invited</span>}</div>
                 <div className='console-project-card-body'>
                   <div className='console-project-id-wrap'>
                     <div className='console-project-id'>{projectRef}</div>
@@ -409,7 +421,7 @@ export default function ProjectSelectView({ go }) {
                   </div>
                   <div className='console-project-date'>Created {fmtDate(p.created_at)}</div>
                 </div>
-                <div className='console-project-card-footer'><span /><button type='button' className='project-delete console-project-delete' onClick={(e) => { e.stopPropagation(); setProjectToDelete(p); setDeleteConfirm(''); }} aria-label={`Delete ${p.name}`}><IconTrash /></button></div>
+                <div className='console-project-card-footer'><span /><button type='button' className='project-delete console-project-delete' aria-disabled={p.invited_project || p.own_project === false} onClick={(e) => { e.stopPropagation(); if (p.invited_project || p.own_project === false) { notify('Invited projects do not count toward your plan and cannot be deleted from your workspace.', 'error'); return; } setProjectToDelete(p); setDeleteConfirm(''); }} aria-label={`Delete ${p.name}`}><IconTrash /></button></div>
               </article>
             );
           })}

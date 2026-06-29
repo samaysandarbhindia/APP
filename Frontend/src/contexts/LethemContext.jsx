@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useMemo, useEffect } from 'react';
 import { cacheGet, cacheSet, cacheBust, cacheBustAfterMutation, cachePruneExpired, setCacheScope } from '../lib/cache';
 import { useAuth } from './AuthContext';
 import { API_BASE_URL } from '../lib/config';
+import { normalizeRole, roleAtLeast, canManageTeam, canManageKeys, canManageSubkeys, canManageProject, pageAccess, roleDeniedMessage } from '../lib/access';
 
 const CTX = createContext(null);
 export const useLethem = () => useContext(CTX);
@@ -250,7 +251,8 @@ export default function LethemProvider({ children, projectSlug, page }) {
 
   const createProject = async (name) => {
     const projectLimit = billing?.plans?.find((plan) => plan.id === billing.currentPlan)?.limits?.projects ?? 3;
-    if (projectLimit !== null && projects.length >= projectLimit) { notify(`Maximum ${projectLimit} projects allowed on your current plan`, 'error'); return null; }
+    const ownProjectCount = projects.filter((project) => project.own_project !== false && !project.invited_project).length;
+    if (projectLimit !== null && ownProjectCount >= projectLimit) { notify(`Maximum ${projectLimit} own projects allowed on your current plan`, 'error'); return null; }
     const p = await api('/api/projects', { method: 'POST', body: { name } });
     await loadProjects();
     return p;
@@ -318,14 +320,27 @@ export default function LethemProvider({ children, projectSlug, page }) {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [page, projectSlug]);
 
+  const selectedProject = projects.find((p) => p.slug === projectSlug || p.id === projectSlug);
+  const currentRole = normalizeRole(selectedProject?.organization_role || account?.organization?.role || 'viewer');
+  const access = {
+    role: currentRole,
+    roleAtLeast: (minimum) => roleAtLeast(currentRole, minimum),
+    canManageTeam: canManageTeam(currentRole),
+    canManageKeys: canManageKeys(currentRole),
+    canManageSubkeys: canManageSubkeys(currentRole),
+    canManageProject: canManageProject(currentRole),
+    canAccessPage: (targetPage) => pageAccess(targetPage, currentRole),
+    denied: roleDeniedMessage,
+  };
+
   const ctx = useMemo(() => ({
     API, providers, loadProviders, fmtNum, fmtTime, fmtDate, quotaColor, sleep,
     api, notify, copyText, modal, setModal, revealedToken, setRevealedToken,
     loadMasterKeys, loadSubkeys, loadLogs, loadOverview, loadBilling, loadMembers, loadInvites, loadAccount, updateAccount,
     checkInvitee, inviteMember, acceptInvite, updateMemberRole, removeMember, revokeInvite,
     subkeys, setSubkeys, masterKeys, logs, analytics, billing, setBilling, members, invites, teamLoading, account, setAccount, page, loading, copiedItem,
-    selectedProject: projects.find((p) => p.slug === projectSlug || p.id === projectSlug),
-  }), [modal, subkeys, masterKeys, logs, analytics, billing, members, invites, teamLoading, account, revealedToken, page, projectSlug, providers, loading, copiedItem, isAuthenticated, user?.sub, projects]);
+    selectedProject, access,
+  }), [modal, subkeys, masterKeys, logs, analytics, billing, members, invites, teamLoading, account, revealedToken, page, projectSlug, providers, loading, copiedItem, isAuthenticated, user?.sub, projects, selectedProject, currentRole]);
 
   const value = useMemo(() => ({
     ctx,
@@ -338,7 +353,7 @@ export default function LethemProvider({ children, projectSlug, page }) {
     filteredProjects: projects.filter((p) =>
       `${p.name} ${p.slug} ${p.id}`.toLowerCase().includes(projectSearch.toLowerCase())
     ),
-    selectedProject: projects.find((p) => p.slug === projectSlug || p.id === projectSlug),
+    selectedProject,
   }), [ctx, projects, projectName, projectSearch, projectToDelete, deleteConfirm, showPlanBanner, mobileMenuOpen, notif, projectSlug, account]);
 
   return <CTX.Provider value={value}>{children}</CTX.Provider>;

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useLethem } from '../contexts/LethemContext';
 import Sidebar from '../components/parts/Sidebar';
 import ConsoleHeader from '../components/parts/ConsoleHeader';
@@ -80,6 +81,15 @@ export default function ConsoleShell({ go, page, projectSlug, accountMode = fals
   };
   const goAccountBack = () => go(getAccountBackPath());
   const PageComponent = PAGES[page];
+  const pageBlocked = !accountMode && ctx.access && !ctx.access.canAccessPage(page);
+
+  useEffect(() => {
+    if (!pageBlocked) return;
+    ctx.notify(ctx.access.denied(`open ${page}`), 'error');
+    go(`/console/${projectSlug}/overview`);
+  }, [pageBlocked, page, projectSlug]);
+
+  if (pageBlocked) return null;
 
   return (
     <>
