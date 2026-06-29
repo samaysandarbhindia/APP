@@ -7,11 +7,15 @@ export default function MembersPage({ ctx }) {
   const [busy, setBusy] = useState('');
   const [inviteCheck, setInviteCheck] = useState(null);
 
+  const canManageTeam = Boolean(ctx.access?.canManageTeam);
+  const denyTeam = () => ctx.notify(ctx.access?.denied?.('manage team members') || 'Your role does not allow this action.', 'error');
+
   useEffect(() => { ctx.loadMembers?.().catch((e) => ctx.notify(e.message, 'error')); }, []);
 
   const resetInviteCheck = () => setInviteCheck(null);
 
   const sendInvite = async (targetEmail = email, targetRole = role) => {
+    if (!canManageTeam) return denyTeam();
     setBusy('invite');
     try {
       await ctx.inviteMember(targetEmail, targetRole);
@@ -21,6 +25,7 @@ export default function MembersPage({ ctx }) {
   };
 
   const invite = async () => {
+    if (!canManageTeam) return denyTeam();
     setBusy('check'); resetInviteCheck();
     try {
       const check = await ctx.checkInvitee(email);
@@ -32,6 +37,7 @@ export default function MembersPage({ ctx }) {
   };
 
   const changeRole = async (member, nextRole) => {
+    if (!canManageTeam) return denyTeam();
     setBusy(member.id);
     try { await ctx.updateMemberRole(member.id, nextRole); }
     catch (e) { ctx.notify(e.message, 'error'); }
@@ -39,6 +45,7 @@ export default function MembersPage({ ctx }) {
   };
 
   const remove = async (member) => {
+    if (!canManageTeam) return denyTeam();
     if (!confirm(`Remove ${member.email || member.name} from this project?`)) return;
     setBusy(member.id);
     try { await ctx.removeMember(member.id); }
@@ -57,12 +64,12 @@ export default function MembersPage({ ctx }) {
         <div className='invite-form'>
           <input value={email} onChange={(e) => { setEmail(e.target.value); resetInviteCheck(); }} placeholder='teammate@example.com' type='email' />
           <select value={role} onChange={(e) => setRole(e.target.value)}>{ASSIGNABLE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select>
-          <button className='btn btn-primary' disabled={busy === 'check' || busy === 'invite' || !email} onClick={invite}>{busy === 'check' ? 'Checking…' : busy === 'invite' ? 'Sending…' : 'Check & Invite'}</button>
+          <button className='btn btn-primary' aria-disabled={!canManageTeam || busy === 'check' || busy === 'invite' || !email} onClick={() => (!canManageTeam ? denyTeam() : (!email ? ctx.notify('Enter an email address', 'error') : invite()))}>{busy === 'check' ? 'Checking…' : busy === 'invite' ? 'Sending…' : 'Check & Invite'}</button>
         </div>
         {inviteCheck && !inviteCheck.exists && (
           <div className='invite-confirm-box'>
             <div><strong>{inviteCheck.email}</strong> is not on Lethem yet. Send an email invite so they can sign up and join this project?</div>
-            <div className='row-actions'><button className='btn btn-ghost btn-sm' onClick={resetInviteCheck}>Cancel</button><button className='btn btn-primary btn-sm' disabled={busy === 'invite'} onClick={() => sendInvite(inviteCheck.email, role)}>Send Email Invite</button></div>
+            <div className='row-actions'><button className='btn btn-ghost btn-sm' onClick={resetInviteCheck}>Cancel</button><button className='btn btn-primary btn-sm' aria-disabled={!canManageTeam || busy === 'invite'} onClick={() => sendInvite(inviteCheck.email, role)}>Send Email Invite</button></div>
           </div>
         )}
       </div>
@@ -71,7 +78,7 @@ export default function MembersPage({ ctx }) {
         {ctx.teamLoading ? <div className='empty'>Loading members…</div> : ctx.members.length === 0 ? <div className='empty'><div className='empty-text'>No members yet.</div></div> : (
           <div className='table-wrap team-table-wrap'><table><thead><tr><th>Member</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead><tbody>{ctx.members.map((m) => {
             const meta = roleMeta(m.role);
-            return <tr key={m.id}><td><div className='member-cell'>{m.picture_url && <img src={m.picture_url} alt='' />}<div><strong>{m.name || m.email || 'Lethem user'}</strong><span>{m.email}{m.is_current_user ? ' · You' : ''}</span></div></div></td><td><span className={`badge ${meta.tone}`}>{meta.label}</span></td><td>{ctx.fmtDate(m.joined_at)}</td><td><div className='row-actions'>{m.role === 'owner' || m.is_current_user ? <span className='muted-text'>Protected</span> : <><select value={m.role} disabled={busy === m.id} onChange={(e) => changeRole(m, e.target.value)}>{ASSIGNABLE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select><button className='btn btn-danger btn-sm' disabled={busy === m.id} onClick={() => remove(m)}>Remove</button></>}</div></td></tr>;
+            return <tr key={m.id}><td><div className='member-cell'>{m.picture_url && <img src={m.picture_url} alt='' />}<div><strong>{m.name || m.email || 'Lethem user'}</strong><span>{m.email}{m.is_current_user ? ' · You' : ''}</span></div></div></td><td><span className={`badge ${meta.tone}`}>{meta.label}</span></td><td>{ctx.fmtDate(m.joined_at)}</td><td><div className='row-actions'>{m.role === 'owner' || m.is_current_user ? <span className='muted-text'>Protected</span> : <><select value={m.role} disabled={!canManageTeam || busy === m.id} onClick={() => !canManageTeam && denyTeam()} onChange={(e) => changeRole(m, e.target.value)}>{ASSIGNABLE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select><button className='btn btn-danger btn-sm' aria-disabled={!canManageTeam || busy === m.id} onClick={() => remove(m)}>Remove</button></>}</div></td></tr>;
           })}</tbody></table></div>
         )}
       </div>

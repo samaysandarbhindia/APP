@@ -613,13 +613,16 @@ fastify.delete('/api/invites/:id', async (req, reply) => {
 fastify.get('/api/projects', async (req, reply) => {
   const auth = await requireAuth(req, reply); if (!auth) return;
   const { rows } = await query(
-    `SELECT p.id,p.name,p.slug,p.status,p.organization_id,COALESCE(om.role, pm.role) AS organization_role,EXTRACT(EPOCH FROM p.created_at)::bigint AS created_at
+    `SELECT p.id,p.name,p.slug,p.status,p.organization_id,COALESCE(om.role, pm.role) AS organization_role,
+            (p.organization_id <> $2) AS invited_project,
+            (p.organization_id = $2) AS own_project,
+            EXTRACT(EPOCH FROM p.created_at)::bigint AS created_at
      FROM projects p
      LEFT JOIN organization_members om ON om.organization_id = p.organization_id AND om.user_id = $1 AND om.role IN ('owner','admin')
      LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
      WHERE om.user_id IS NOT NULL OR pm.user_id IS NOT NULL
      ORDER BY p.created_at DESC`,
-    [auth.user.id],
+    [auth.user.id, auth.organization.id],
   );
   return rows;
 });

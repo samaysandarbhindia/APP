@@ -29,11 +29,18 @@ export default function Sidebar({ page, navigate, onBackToConsole, drawerOpen, s
     setDrawerOpen(false);
   };
 
-  const renderItem = ([key, label, Icon], mobile = false) => (
-    <button key={key} className={`${mobile ? 'mobile-drawer-item' : 'nav-item'} ${key === 'danger' ? 'danger-nav-item' : ''} ${page === key ? 'active' : ''}`} onClick={() => (mobile ? go(key) : navigate(key))}>
-      <Icon /> {label}{key === 'demo' && <span className='nav-dot' />}
-    </button>
-  );
+  const renderItem = ([key, label, Icon], mobile = false) => {
+    const blocked = !ctx.access?.canAccessPage?.(key);
+    const openItem = () => {
+      if (blocked) { ctx.notify(ctx.access?.denied?.(`open ${label}`) || 'Your role does not allow this action.', 'error'); return; }
+      mobile ? go(key) : navigate(key);
+    };
+    return (
+      <button key={key} aria-disabled={blocked} title={blocked ? ctx.access?.denied?.(`open ${label}`) : undefined} className={`${mobile ? 'mobile-drawer-item' : 'nav-item'} ${key === 'danger' ? 'danger-nav-item' : ''} ${page === key ? 'active' : ''} ${blocked ? 'is-disabled' : ''}`} onClick={openItem}>
+        <Icon /> {label}{key === 'demo' && <span className='nav-dot' />}
+      </button>
+    );
+  };
 
   return <>
     <aside className='sidebar'>
